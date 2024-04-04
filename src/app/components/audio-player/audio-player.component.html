@@ -1,0 +1,27 @@
+<p>audio-player works!</p>
+<input type="file" (change)="this.HandleOnInputFileChanged($event)" multiple />
+
+<div class="Main">
+    <div class="MetaData">
+        <div class="PictureContainer">
+            <img *ngIf="this.TrackPictureUrl" [src]="this.TrackPictureUrl">
+        </div>
+        <div>{{this.ActiveAudioTags?.common?.title}}</div>
+        <div>{{this.ActiveAudioTags?.common?.artist}}</div>
+        <div>{{this.ActiveAudioTags?.common?.album}}</div>
+    </div>
+    <div class="Players">
+        <audio class="FirstPlayer"
+            #firstPlayer
+            [attr.controls]="this.ActiveAudioElement == firstPlayer ? '' : null"
+            (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
+            (ended)="this.PlaybackEnded($event)">
+        </audio>
+        <audio class="SecondPlayer"
+            #secondPlayer
+            [attr.controls]="this.ActiveAudioElement == secondPlayer ? '' : null"
+            (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
+            (ended)="this.PlaybackEnded($event)">
+        </audio>
+    </div>
+</div>
