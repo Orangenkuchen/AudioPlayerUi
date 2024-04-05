@@ -1,11 +1,41 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import * as mm from 'music-metadata-browser';
+import { ElementToggle } from '../../../entities/ElementToggle';
+import { FileSourceDirective } from '../../directives/FileSource/file-source.directive';
+
+/**
+ * Stellt ein AudioElement, welches gerade im aktiven oder inaktiven Audio-Element ist.
+ */
+interface AudioElement
+{
+    AudioHtmlElement: HTMLAudioElement;
+
+    AudioFile: File | null;
+
+    AudioMetaDataPromise: Promise<mm.IAudioMetadata> | null;
+}
+
+/**
+ * Stellt ein Element aus der Warteschlange dar.
+ */
+interface QueueElement
+{
+    /**
+     * Die Metadaten vom Lied
+     */
+    AudioMetadataPromise: Promise<mm.IAudioMetadata>
+
+    /**
+     * Die Audio-Datei
+     */
+    File: File;
+}
 
 @Component({
     selector: 'app-audio-player',
     standalone: true,
-    imports: [CommonModule],
+    imports: [CommonModule, FileSourceDirective],
     templateUrl: './audio-player.component.html',
     styleUrl: './audio-player.component.less'
 })
@@ -16,16 +46,6 @@ export class AudioPlayerComponent implements OnInit
      * Die Anzahl der Millisekunden, welche beim Ende eines Lieds, zur anderen überblendet werden soll.
      */
     private readonly transitionTimeInMs: number;
-
-    /**
-     * Eine Referenz auf das erste Audio-Element
-     */
-    private firstAudioElement: HTMLAudioElement | null;
-
-    /**
-     * Eine Referenz auf das zweite Audio-Element
-     */
-    private secondAudioElement: HTMLAudioElement | null;
     // #endregion
 
     // #region ctor
@@ -36,14 +56,11 @@ export class AudioPlayerComponent implements OnInit
     {
         this.transitionTimeInMs = 30000;
 
-        this.firstAudioElement = null;
-        this.secondAudioElement = null;
-
-        this.ActiveAudioElement = null;
         this.ActiveAudioTags = null;
         this.TrackPictureUrl = null;
 
-        this.SourceUrlList = new Array<string>();
+        this.TrackQueue = new Array<QueueElement>();
+        this.AudioToggle = null;
     }
     // #endregion
 
@@ -53,16 +70,45 @@ export class AudioPlayerComponent implements OnInit
      */
     public ngOnInit(): void
     {
-        this.firstAudioElement = document.querySelector(".FirstPlayer");
-        this.secondAudioElement = document.querySelector(".SecondPlayer");
+        let firstAudioElement = document.querySelector<HTMLAudioElement>(".FirstPlayer");
+        let secondAudioElement = document.querySelector<HTMLAudioElement>(".SecondPlayer");
+
+        if (firstAudioElement == null || firstAudioElement instanceof HTMLAudioElement == false)
+        {
+            throw new Error("First audio element was not found or wrong type.");
+        }
+        if (secondAudioElement == null || secondAudioElement instanceof HTMLAudioElement == false)
+        {
+            throw new Error("First audio element was not found or wrong type.");
+        }
+
+        this.AudioToggle = new ElementToggle<AudioElement>(
+            {
+                AudioHtmlElement: firstAudioElement,
+                AudioMetaDataPromise: null,
+                AudioFile: null
+            },
+            {
+                AudioHtmlElement: secondAudioElement,
+                AudioMetaDataPromise: null,
+                AudioFile: null
+            }
+        );
     }
     // #endregion
 
-    // #region ActiveAudioElement
+    // #region TrackQueue
     /**
-     * Das aktuelle aktive HTMLAudioElement
+     * Die Warteschlange von ausstehenden Audio-Dateien.
      */
-    public ActiveAudioElement: HTMLAudioElement | null;
+    public readonly TrackQueue: Array<QueueElement>;
+    // #endregion
+
+    // #region AudioToggle
+    /**
+     * Toggle für die Audio-Elemente
+     */
+    public AudioToggle: ElementToggle<AudioElement> | null;
     // #endregion
 
     // #region ActiveAudioTags
@@ -79,13 +125,6 @@ export class AudioPlayerComponent implements OnInit
     public TrackPictureUrl: string | null;
     // #endregion
 
-    // #region SourceUrlList
-    /**
-     * List von den Urls von den Audio-Quell-Dateien
-     */
-    public SourceUrlList: Array<string>;
-    // #endregion
-
     // #region HandleOnInputFileChanged
     /**
      * Wird augerufen, wenn die Datei(en) im Input sich verändern
@@ -94,43 +133,25 @@ export class AudioPlayerComponent implements OnInit
      */
     public HandleOnInputFileChanged(inputFileChanged: Event): void
     {
+        console.info("HandleOnInputFileChanged: Was called...");
+
         let eventTarget = <HTMLInputElement>inputFileChanged.target;
 
-        this.SourceUrlList.length = 0;
-
-        if (eventTarget.files != undefined)
+        if (eventTarget.files != null)
         {
-            for (let i = 0; i < eventTarget.files?.length; i++)
+            console.info("HandleOnInputFileChanged: Adding %i Elements to TrackQueue...", eventTarget.files.length);
+            for (let i = 0; i < eventTarget.files.length; i++)
             {
-                let file = eventTarget.files[i];
-
-                let fileObjectUrl = URL.createObjectURL(file);
-
-                this.SourceUrlList.push(fileObjectUrl);
+                this.TrackQueue.push(
+                    {
+                        AudioMetadataPromise: mm.parseBlob(eventTarget.files[i]),
+                        File: eventTarget.files[i]
+                    }
+                );
             }
+
+            this.TryFillAudiosFromTrackQueue();
         }
-
-        if (this.firstAudioElement == null || this.secondAudioElement == null)
-        {
-            throw new Error("Audio-Elements are null")
-        }
-
-        this.firstAudioElement.pause();
-        this.secondAudioElement.pause();
-
-        this.firstAudioElement.src = this.SourceUrlList[0];
-        this.secondAudioElement.src = this.SourceUrlList[1];
-
-        this.firstAudioElement.load();
-        this.secondAudioElement.load();
-
-        this.firstAudioElement.play();
-        this.ActiveAudioElement = this.firstAudioElement;
-        
-        mm.fetchFromUrl(this.ActiveAudioElement.src).then(
-            (audioTags) => { this.HandleOnMetaDataTagsOfActiveAudioReceived(audioTags); },
-            (error) => { console.error("Error while getting audio meta data: %o", error); }
-        );
     }
     // #endregion
 
@@ -144,62 +165,57 @@ export class AudioPlayerComponent implements OnInit
     {
         let audioElementTarget = <HTMLAudioElement>audioTimeChangedEvent.target;
 
-        if (this.firstAudioElement == null || this.secondAudioElement == null)
+        if (this.AudioToggle == null)
         {
-            throw new Error("Audio-Elements are null")
+            throw new Error("AudioToggle is null")
         }
 
-        if (this.ActiveAudioElement == audioElementTarget)
+        if (this.AudioToggle.ActiveElement.AudioHtmlElement == audioElementTarget)
         {
             let remainingTimeInActiveAudio = audioElementTarget.duration - audioElementTarget.currentTime;
 
             if (remainingTimeInActiveAudio * 1000 < this.transitionTimeInMs)
             {
-                console.info(`Remaining: ${remainingTimeInActiveAudio * 1000}; Transition: ${this.transitionTimeInMs}; % ${(remainingTimeInActiveAudio * 1000) / this.transitionTimeInMs}`)
                 let percentageIntoTransition = 1 - (remainingTimeInActiveAudio * 1000) / this.transitionTimeInMs;
 
-                let inactiveAudio = this.firstAudioElement == this.ActiveAudioElement ? this.secondAudioElement : this.firstAudioElement;
-
-                if (inactiveAudio.paused)
+                if (this.AudioToggle.InactiveElement.AudioHtmlElement.paused)
                 {
-                    console.info("Inaktive Audio is not playing. Starting...");
-                    inactiveAudio.play();
+                    console.debug("Inaktive Audio is not playing. Starting...");
+                    this.AudioToggle.InactiveElement.AudioHtmlElement.play();
                 }
-                console.info(`In Transitoin (ActiveVolume: ${1 - percentageIntoTransition}; SecondVolume: ${percentageIntoTransition})...`);
+                console.debug(`In Transitoin (ActiveVolume: ${1 - percentageIntoTransition}; SecondVolume: ${percentageIntoTransition})...`);
 
-                this.ActiveAudioElement.volume = 1 - percentageIntoTransition;
-                inactiveAudio.volume = percentageIntoTransition;
+                this.AudioToggle.ActiveElement.AudioHtmlElement.volume = 1 - percentageIntoTransition;
+                this.AudioToggle.InactiveElement.AudioHtmlElement.volume = percentageIntoTransition;
             }
             else
             {
-                console.info("Not yet in transition...");
+                console.debug("Not yet in transition...");
             }
         }
     }
     // #endregion
 
-    // #region PlaybackEnded
+    // #region HandleOnPlaybackEnded
     /**
      * Wird aufgerufen, wenn das Abspielen von einem AudioElement endet.
      * 
-     * @param playbackEnded Das Event vom Audio-Element, von das Abspielen beendet wurde.
+     * @param HandleOnPlaybackEnded Das Event vom Audio-Element, von das Abspielen beendet wurde.
      */
-    public PlaybackEnded(playbackEnded: Event): void
+    public HandleOnPlaybackEnded(HandleOnPlaybackEnded: Event): void
     {
-        let audioElementTarget = <HTMLAudioElement>playbackEnded.target;
+        console.info("HandleOnPlaybackEnded: Audio has ended");
+        let audioElementTarget = <HTMLAudioElement>HandleOnPlaybackEnded.target;
 
-        if (this.firstAudioElement == null || this.secondAudioElement == null)
+        if (this.AudioToggle == null)
         {
-            throw new Error("Audio-Elements are null")
+            throw new Error("AudioToggle is null")
         }
 
-        this.ActiveAudioElement = audioElementTarget == this.firstAudioElement ? this.secondAudioElement : this.firstAudioElement;
-        console.info("Changeing active Audio-Element to %o", this.ActiveAudioElement);
-        
-        mm.fetchFromUrl(this.ActiveAudioElement.src).then(
-            (audioTags) => { this.HandleOnMetaDataTagsOfActiveAudioReceived(audioTags); },
-            (error) => { console.error("Error while getting audio meta data: %o", error); }
-        );
+        this.AudioToggle.ActiveElement.AudioFile = null;
+        this.AudioToggle.Toggle();
+
+        this.TryFillAudiosFromTrackQueue();
     }
     // #endregion
 
@@ -228,6 +244,43 @@ export class AudioPlayerComponent implements OnInit
                 },
                 1000
             );
+        }
+    }
+    // #endregion
+
+    // #region TryFillAudiosFromTrackQueue
+    /**
+     * Versucht das primäre und sekundäre Audio-Element mit Audio-Dateien aus der Warteschlange zu füllen.
+     */
+    private TryFillAudiosFromTrackQueue()
+    {
+        if (this.AudioToggle != null)
+        {
+            if (this.AudioToggle.ActiveElement.AudioFile == null &&
+                this.TrackQueue.length > 0)
+            {
+                let queueElement = this.TrackQueue.splice(0, 1)[0];
+
+                this.AudioToggle.ActiveElement.AudioFile = queueElement.File;
+                this.AudioToggle.ActiveElement.AudioMetaDataPromise = queueElement.AudioMetadataPromise;
+            }
+
+            if (this.AudioToggle.InactiveElement.AudioFile == null &&
+                this.TrackQueue.length > 0)
+            {
+                let queueElement = this.TrackQueue.splice(0, 1)[0];
+
+                this.AudioToggle.InactiveElement.AudioFile = queueElement.File;
+                this.AudioToggle.InactiveElement.AudioMetaDataPromise = queueElement.AudioMetadataPromise;
+            }
+
+            if (this.AudioToggle.ActiveElement.AudioMetaDataPromise != null)
+            {
+                this.AudioToggle.ActiveElement.AudioMetaDataPromise.then(
+                    (tags) => { this.HandleOnMetaDataTagsOfActiveAudioReceived(tags); },
+                    (error: any) => { console.error("Error while getting Metadata from Audio-File %o", error) }
+                )
+            }
         }
     }
     // #endregion

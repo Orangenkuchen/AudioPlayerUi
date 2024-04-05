@@ -1,6 +1,10 @@
 <p>audio-player works!</p>
 <input type="file" (change)="this.HandleOnInputFileChanged($event)" multiple />
-
+<div class="TrackQueue">
+    <div *ngFor="let queueElement of this.TrackQueue">
+        <p *ngIf="queueElement.AudioMetadataPromise | async; let audioMetadata">{{audioMetadata.common.title}} - {{ audioMetadata.common.artist }}</p>
+    </div>
+</div>
 <div class="Main">
     <div class="MetaData">
         <div class="PictureContainer">
@@ -10,18 +14,26 @@
         <div>{{this.ActiveAudioTags?.common?.artist}}</div>
         <div>{{this.ActiveAudioTags?.common?.album}}</div>
     </div>
-    <div class="Players">
-        <audio class="FirstPlayer"
-            #firstPlayer
-            [attr.controls]="this.ActiveAudioElement == firstPlayer ? '' : null"
-            (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
-            (ended)="this.PlaybackEnded($event)">
-        </audio>
-        <audio class="SecondPlayer"
-            #secondPlayer
-            [attr.controls]="this.ActiveAudioElement == secondPlayer ? '' : null"
-            (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
-            (ended)="this.PlaybackEnded($event)">
-        </audio>
+    <div class="Player">
+        <div>
+
+        </div>
+        <div class="">
+
+        </div>
     </div>
+    <audio class="FirstPlayer"
+        #firstPlayer
+        controls
+        [appFileSource]="this.AudioToggle?.ElementA?.AudioFile"
+        (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
+        (ended)="this.HandleOnPlaybackEnded($event)">
+    </audio>
+    <audio class="SecondPlayer"
+        #secondPlayer
+        controls
+        [appFileSource]="this.AudioToggle?.ElementB?.AudioFile"
+        (timeupdate)="this.HandleOnTimeOfAudioChanged($event)"
+        (ended)="this.HandleOnPlaybackEnded($event)">
+    </audio>
 </div>
